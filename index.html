@@ -163,14 +163,7 @@
         <input type="number" id="cfg-offset" min="-127" max="127" value="0">
         <span class="hint">received value + offset = song number</span>
       </div>
-      <div class="row">
-        <span class="row-label">Delimiter:</span>
-        <input type="text" id="cfg-delim" maxlength="3"
-               style="width:50px;background:var(--accent);color:var(--text);border:1px solid #3a4a6a;
-                      border-radius:6px;padding:8px 10px;font-size:0.9rem;text-align:center"
-               value="-">
-        <span class="hint">separator after number in filename  (e.g. <code style="font-size:0.78rem;background:var(--accent);padding:1px 4px;border-radius:3px">01-songname.pdf</code>)</span>
-      </div>
+
     </div>
 
     <!-- PDF Folder -->
@@ -191,8 +184,9 @@
     </button>
 
     <div class="info-box">
-      Filename format: <code>01-songname.pdf</code> or <code>001 - songname.pdf</code><br>
-      Leading digits matched as song number · delimiter optional<br>
+      Filename format: <code>042 - B120 - 4O4 - The Beatles - Let It Be.pdf</code><br>
+      Song number (leading digits) · BPM (Bxxx) · Time sig (aOb) · Artist · Title<br>
+      BPM and time signature are ignored by the app · only song number is matched<br>
       Requires Chrome on Android · WebMIDI needs secure context (localhost or HTTPS)
     </div>
   </div>
@@ -243,7 +237,7 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 const CFG_KEY = 'bml-config-v1';
 
 function defaultConfig() {
-  return { channel: 1, signalType: 'cc', ccFilter: 0, offset: 0, delimiter: '-', midiPortId: '' };
+  return { channel: 1, signalType: 'cc', ccFilter: 0, offset: 0, midiPortId: '' };
 }
 
 function loadConfig() {
@@ -272,7 +266,6 @@ function populateConfigUI() {
   $('cfg-ch').value     = cfg.channel;
   $('cfg-cc').value     = cfg.ccFilter;
   $('cfg-offset').value = cfg.offset;
-  $('cfg-delim').value  = cfg.delimiter;
 
   document.querySelectorAll('#sig-group label').forEach(lbl => {
     const inp = lbl.querySelector('input');
@@ -314,11 +307,6 @@ function numInput(id, field, lo, hi) {
 numInput('cfg-ch',     'channel',    1,    16);
 numInput('cfg-cc',     'ccFilter',   0,   127);
 numInput('cfg-offset', 'offset',  -127,  127);
-
-$('cfg-delim').addEventListener('change', () => {
-  cfg.delimiter = $('cfg-delim').value || '-';
-  saveConfig();
-});
 
 // ── MIDI ──────────────────────────────────────────────────────────────────
 function setMidiStatus(state, text) {
@@ -460,10 +448,10 @@ $('btn-folder').addEventListener('click', async () => {
 });
 
 function parseFileNumber(name) {
-  // Match leading digits; the rest is ignored for matching purposes
-  const m = name.match(/^(\d+)/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
+  // Format: xxx - Byyy - aOb - INTERPRET_NAME - SONG_NAME.pdf
+  // Song number is the first segment before ' - '
+  const seg = name.split(' - ')[0].trim();
+  const n = parseInt(seg, 10);
   return isNaN(n) ? null : n;
 }
 
@@ -501,7 +489,7 @@ async function showSong(number) {
     $('pdf-embed').style.display = 'none';
     $('no-pdf').style.display    = 'flex';
     $('v-name').textContent      = 'No PDF found';
-    $('no-pdf-hint').textContent = `No file starting with "${number}" in selected folder`;
+    $('no-pdf-hint').textContent = `Expected: ${String(number).padStart(3,'0')} - Bxxx - aOb - Artist - Title.pdf`;
     return;
   }
 
@@ -517,12 +505,14 @@ async function showSong(number) {
     $('pdf-embed').style.display     = 'block';
     $('pdf-embed').src               = url + '#toolbar=0&view=FitH';
 
-    // Derive display name: strip leading number + delimiter
+    // Derive display name from format: xxx - Byyy - aOb - INTERPRET_NAME - SONG_NAME
+    // Display: INTERPRET_NAME - SONG_NAME  (skip first 3 segments)
     const rawName = (await handle.getFile()).name;
-    const displayName = rawName
-      .replace(/^\d+\s*[-_.\s]+\s*/, '')
-      .replace(/\.pdf$/i, '');
-    $('v-name').textContent = displayName || rawName;
+    const parts = rawName.replace(/\.pdf$/i, '').split(' - ');
+    const displayName = parts.length >= 5
+      ? parts.slice(3).join(' - ')
+      : rawName.replace(/\.pdf$/i, '');
+    $('v-name').textContent = displayName;
 
   } catch (e) {
     toast('Error loading PDF: ' + e.message);
