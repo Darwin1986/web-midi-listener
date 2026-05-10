@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>BandMaster Listener</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #1a1a2e;
+      --surface:   #16213e;
+      --accent:    #0f3460;
+      --highlight: #e94560;
+      --text:      #eaeaea;
+      --muted:     #888;
+      --green:     #4caf50;
+      --orange:    #ff9800;
+      --red:       #f44336;
+    }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+                 font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    /* ── Screens ────────────────────────────────────────────────────── */
+    .screen { position: absolute; inset: 0; display: none; flex-direction: column; }
+    .screen.active { display: flex; }
+
+    /* ── Setup screen ───────────────────────────────────────────────── */
+    #setup-screen { overflow-y: auto; }
+    .setup-header { background: var(--accent); padding: 14px 18px; display: flex;
+                    align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .setup-header h1 { font-size: 1.25rem; }
+    .setup-header small { font-size: 0.75rem; color: #aaa; display: block; margin-top: 2px; }
+    .badge { background: var(--highlight); padding: 3px 9px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; }
+    .setup-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;
+                  max-width: 640px; margin: 0 auto; width: 100%; }
+    .card { background: var(--surface); border-radius: 10px; padding: 14px 16px; }
+    .card h2 { font-size: 0.85rem; color: var(--highlight); margin-bottom: 12px;
+               text-transform: uppercase; letter-spacing: 0.06em; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .row:last-child { margin-bottom: 0; }
+    .row-label { font-size: 0.88rem; color: var(--muted); min-width: 90px; flex-shrink: 0; }
+    select, input[type=number] {
+      background: var(--accent); color: var(--text); border: 1px solid #3a4a6a;
+      border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+    }
+    select { flex: 1; min-width: 0; }
+    input[type=number] { width: 78px; }
+    .hint { font-size: 0.78rem; color: var(--muted); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+           padding: 10px 16px; border-radius: 8px; border: none; font-size: 0.9rem;
+           cursor: pointer; font-weight: 600; transition: opacity 0.15s; }
+    .btn:active { opacity: 0.7; }
+    .btn-primary   { background: var(--highlight); color: white; }
+    .btn-secondary { background: var(--accent); color: var(--text); border: 1px solid #3a4a6a; }
+    .btn-full { width: 100%; }
+    .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+    .dot-ok   { background: var(--green);  }
+    .dot-warn { background: var(--orange); }
+    .dot-err  { background: var(--red);    }
+    .status-text { font-size: 0.85rem; color: var(--muted); }
+    /* Signal type radios */
+    .sig-group { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sig-group label { display: flex; align-items: center; gap: 5px; cursor: pointer;
+                       padding: 6px 11px; border-radius: 20px; background: var(--accent);
+                       border: 2px solid transparent; font-size: 0.85rem; user-select: none; }
+    .sig-group input[type=radio] { display: none; }
+    .sig-group label.sel { border-color: var(--highlight); color: var(--highlight); font-weight: 600; }
+    .info-box { font-size: 0.78rem; color: var(--muted); text-align: center;
+                padding: 6px 0 18px; line-height: 1.6; }
+    .info-box code { background: var(--accent); padding: 1px 5px; border-radius: 3px; font-size: 0.78rem; }
+
+    /* ── Viewer screen ──────────────────────────────────────────────── */
+    #viewer-screen { background: #000; }
+    .viewer-bar { height: 46px; background: rgba(10,10,30,0.92); display: flex;
+                  align-items: center; padding: 0 10px; gap: 8px; flex-shrink: 0;
+                  border-bottom: 1px solid #222; }
+    .v-num  { font-size: 1.35rem; font-weight: 700; color: var(--highlight); min-width: 46px; }
+    .v-name { font-size: 0.82rem; color: var(--muted); flex: 1; overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+    .midi-dot { width: 9px; height: 9px; border-radius: 50%; background: #333; transition: background 0.08s; }
+    .midi-dot.flash { background: var(--green); }
+    .pdf-wrap { flex: 1; position: relative; }
+    .pdf-wrap embed { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
+    .no-pdf { position: absolute; inset: 0; display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 10px; color: var(--muted); }
+    .no-pdf .big { font-size: 5.5rem; font-weight: 800; color: #1e2a45; line-height: 1; }
+    .waiting { position: absolute; inset: 0; display: flex; flex-direction: column;
+               align-items: center; justify-content: center; gap: 14px; color: var(--muted); }
+    .waiting .wlabel { font-size: 1rem; }
+    .waiting .wpulse { font-size: 3rem; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+    /* ── Toast ──────────────────────────────────────────────────────── */
+    #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+             background: #2a2a2a; color: #eee; padding: 9px 18px; border-radius: 18px;
+             font-size: 0.85rem; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+             z-index: 200; white-space: nowrap; max-width: 90vw; overflow: hidden;
+             text-overflow: ellipsis; }
+    #toast.show { opacity: 1; }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════  SETUP SCREEN  ═══════════════ -->
+<div id="setup-screen" class="screen active">
+  <div class="setup-header">
+    <div>
+      <h1>🎵 BandMaster Listener</h1>
+      <small>MIDI → PDF companion</small>
+    </div>
+    <span class="badge">v1.0</span>
+  </div>
+
+  <div class="setup-body">
+
+    <!-- MIDI Input -->
+    <div class="card">
+      <h2>🎹 MIDI Input</h2>
+      <div class="status-row">
+        <div class="dot" id="midi-dot"></div>
+        <span class="status-text" id="midi-status">Requesting MIDI access…</span>
+      </div>
+      <div class="row">
+        <span class="row-label">Device:</span>
+        <select id="sel-midi">
+          <option value="">— Select MIDI input —</option>
+        </select>
+        <button class="btn btn-secondary" id="btn-refresh" title="Refresh devices">⟳</button>
+      </div>
+    </div>
+
+    <!-- Signal Config -->
+    <div class="card">
+      <h2>📡 Signal Configuration</h2>
+      <div class="row" style="margin-bottom:14px">
+        <span class="row-label">Type:</span>
+        <div class="sig-group" id="sig-group">
+          <label class="sel"><input type="radio" name="sig" value="cc" checked><span>CC</span></label>
+          <label><input type="radio" name="sig" value="pc"><span>PC</span></label>
+          <label><input type="radio" name="sig" value="note_on"><span>Note On</span></label>
+          <label><input type="radio" name="sig" value="note_off"><span>Note Off</span></label>
+          <label><input type="radio" name="sig" value="note_on_off"><span>Note On+Off</span></label>
+        </div>
+      </div>
+      <div class="row">
+        <span class="row-label">Channel:</span>
+        <input type="number" id="cfg-ch" min="1" max="16" value="1">
+        <span class="hint">1 – 16</span>
+      </div>
+      <div class="row" id="row-cc">
+        <span class="row-label">CC# filter:</span>
+        <input type="number" id="cfg-cc" min="0" max="127" value="0">
+        <span class="hint">which CC controller to listen on</span>
+      </div>
+      <div class="row">
+        <span class="row-label">Song offset:</span>
+        <input type="number" id="cfg-offset" min="-127" max="127" value="0">
+        <span class="hint">received value + offset = song number</span>
+      </div>
+      <div class="row">
+        <span class="row-label">Delimiter:</span>
+        <input type="text" id="cfg-delim" maxlength="3"
+               style="width:50px;background:var(--accent);color:var(--text);border:1px solid #3a4a6a;
+                      border-radius:6px;padding:8px 10px;font-size:0.9rem;text-align:center"
+               value="-">
+        <span class="hint">separator after number in filename  (e.g. <code style="font-size:0.78rem;background:var(--accent);padding:1px 4px;border-radius:3px">01-songname.pdf</code>)</span>
+      </div>
+    </div>
+
+    <!-- PDF Folder -->
+    <div class="card">
+      <h2>📂 PDF Folder</h2>
+      <div class="status-row">
+        <div class="dot" id="folder-dot"></div>
+        <span class="status-text" id="folder-status">No folder selected</span>
+      </div>
+      <button class="btn btn-secondary btn-full" id="btn-folder">📁  Select PDF Folder</button>
+      <div id="pdf-count" style="margin-top:8px;font-size:0.8rem;color:var(--muted)"></div>
+    </div>
+
+    <!-- Start -->
+    <button class="btn btn-primary btn-full" id="btn-start" disabled
+            style="font-size:1.05rem;padding:13px">
+      ▶  Start Listening
+    </button>
+
+    <div class="info-box">
+      Filename format: <code>01-songname.pdf</code> or <code>001 - songname.pdf</code><br>
+      Leading digits matched as song number · delimiter optional<br>
+      Requires Chrome on Android · WebMIDI needs secure context (localhost or HTTPS)
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════  VIEWER SCREEN  ══════════════ -->
+<div id="viewer-screen" class="screen">
+  <div class="viewer-bar">
+    <span class="v-num"  id="v-num">—</span>
+    <span class="v-name" id="v-name">Waiting for MIDI…</span>
+    <div class="midi-dot" id="midi-flash"></div>
+    <button class="btn btn-secondary" id="btn-settings"
+            style="padding:6px 11px;font-size:0.82rem;flex-shrink:0">⚙ Settings</button>
+  </div>
+  <div class="pdf-wrap">
+    <embed id="pdf-embed" type="application/pdf" style="display:none">
+    <div class="no-pdf" id="no-pdf" style="display:none">
+      <div class="big" id="no-pdf-num">—</div>
+      <div>No PDF found for this song</div>
+      <div id="no-pdf-hint" style="font-size:0.8rem"></div>
+    </div>
+    <div class="waiting" id="waiting-msg">
+      <div class="wpulse">🎵</div>
+      <div class="wlabel">Listening for MIDI…</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function toast(msg, duration = 3000) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── Persistent config ─────────────────────────────────────────────────────
+const CFG_KEY = 'bml-config-v1';
+
+function defaultConfig() {
+  return { channel: 1, signalType: 'cc', ccFilter: 0, offset: 0, delimiter: '-', midiPortId: '' };
+}
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    if (raw) return Object.assign(defaultConfig(), JSON.parse(raw));
+  } catch {}
+  return defaultConfig();
+}
+
+function saveConfig() {
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+}
+
+const cfg = loadConfig();
+
+// ── State ─────────────────────────────────────────────────────────────────
+let midiAccess    = null;
+let selectedInput = null;
+let dirHandle     = null;
+const pdfMap      = new Map();   // number (int) → FileSystemFileHandle
+const urlCache    = new Map();   // number → blob URL
+
+// ── Populate config UI ────────────────────────────────────────────────────
+function populateConfigUI() {
+  $('cfg-ch').value     = cfg.channel;
+  $('cfg-cc').value     = cfg.ccFilter;
+  $('cfg-offset').value = cfg.offset;
+  $('cfg-delim').value  = cfg.delimiter;
+
+  document.querySelectorAll('#sig-group label').forEach(lbl => {
+    const inp = lbl.querySelector('input');
+    const match = inp.value === cfg.signalType;
+    lbl.classList.toggle('sel', match);
+    if (match) inp.checked = true;
+  });
+
+  updateCcRowVisibility();
+}
+
+function updateCcRowVisibility() {
+  $('row-cc').style.display = cfg.signalType === 'cc' ? '' : 'none';
+}
+
+function updateStartButton() {
+  $('btn-start').disabled = !(selectedInput && dirHandle);
+}
+
+// ── Config event listeners ────────────────────────────────────────────────
+document.querySelectorAll('#sig-group input[type=radio]').forEach(inp => {
+  inp.addEventListener('change', () => {
+    if (!inp.checked) return;
+    cfg.signalType = inp.value;
+    document.querySelectorAll('#sig-group label').forEach(lbl =>
+      lbl.classList.toggle('sel', lbl.querySelector('input').value === inp.value));
+    updateCcRowVisibility();
+    saveConfig();
+  });
+});
+
+function numInput(id, field, lo, hi) {
+  $(id).addEventListener('change', () => {
+    cfg[field] = clamp(parseInt($(id).value) || 0, lo, hi);
+    $(id).value = cfg[field];
+    saveConfig();
+  });
+}
+numInput('cfg-ch',     'channel',    1,    16);
+numInput('cfg-cc',     'ccFilter',   0,   127);
+numInput('cfg-offset', 'offset',  -127,  127);
+
+$('cfg-delim').addEventListener('change', () => {
+  cfg.delimiter = $('cfg-delim').value || '-';
+  saveConfig();
+});
+
+// ── MIDI ──────────────────────────────────────────────────────────────────
+function setMidiStatus(state, text) {
+  $('midi-dot').className = 'dot ' + (state === 'ok' ? 'dot-ok' : state === 'warn' ? 'dot-warn' : 'dot-err');
+  $('midi-status').textContent = text;
+}
+
+async function initMidi() {
+  if (!navigator.requestMIDIAccess) {
+    setMidiStatus('err', 'WebMIDI not supported — use Chrome on Android');
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess.onstatechange = () => refreshMidiList();
+    refreshMidiList();
+  } catch (e) {
+    setMidiStatus('err', 'MIDI access denied: ' + (e.message || e));
+  }
+}
+
+function refreshMidiList() {
+  const sel = $('sel-midi');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Select MIDI input —</option>';
+
+  if (!midiAccess) return;
+  for (const [id, port] of midiAccess.inputs) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = port.name;
+    if (id === (prev || cfg.midiPortId)) opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  if (midiAccess.inputs.size === 1 && !sel.value) sel.selectedIndex = 1;
+
+  if (sel.value) {
+    connectMidi(sel.value);
+  } else if (midiAccess.inputs.size === 0) {
+    setMidiStatus('err', 'No MIDI input devices found');
+    selectedInput = null;
+    updateStartButton();
+  } else {
+    setMidiStatus('warn', 'Select a MIDI device above');
+    selectedInput = null;
+    updateStartButton();
+  }
+}
+
+function connectMidi(portId) {
+  if (selectedInput) selectedInput.onmidimessage = null;
+  const port = midiAccess && midiAccess.inputs.get(portId);
+  if (!port) { setMidiStatus('err', 'Device not found'); return; }
+
+  selectedInput = port;
+  cfg.midiPortId = portId;
+  saveConfig();
+
+  port.onmidimessage = handleMidi;
+  setMidiStatus('ok', 'Connected: ' + port.name);
+  updateStartButton();
+}
+
+$('sel-midi').addEventListener('change', () => {
+  if ($('sel-midi').value) connectMidi($('sel-midi').value);
+});
+$('btn-refresh').addEventListener('click', refreshMidiList);
+
+// ── MIDI message handling ─────────────────────────────────────────────────
+function handleMidi(ev) {
+  const data   = ev.data;
+  const status = data[0];
+  const d1     = data[1] ?? 0;
+  const d2     = data[2] ?? 0;
+
+  const ch   = (status & 0x0F) + 1;   // 1-based
+  const type = (status & 0xF0);
+
+  if (ch !== cfg.channel) return;
+
+  let rawValue = null;
+
+  switch (cfg.signalType) {
+    case 'cc':
+      if (type !== 0xB0) return;
+      if (d1 !== cfg.ccFilter) return;
+      if (d2 === 0) return;  // ignore 0-velocity (release)
+      rawValue = d2;
+      break;
+    case 'pc':
+      if (type !== 0xC0) return;
+      rawValue = d1;
+      break;
+    case 'note_on':
+      if (type !== 0x90) return;
+      if (d2 === 0) return;  // velocity=0 is Note Off on many devices
+      rawValue = d1;
+      break;
+    case 'note_off':
+      if (type !== 0x80) return;
+      rawValue = d1;
+      break;
+    case 'note_on_off':
+      if (type !== 0x90) return;
+      if (d2 === 0) return;
+      rawValue = d1;
+      break;
+    default: return;
+  }
+
+  if (rawValue === null) return;
+  const songNumber = rawValue + cfg.offset;
+  flashMidi();
+  showSong(songNumber);
+}
+
+function flashMidi() {
+  const el = $('midi-flash');
+  el.classList.add('flash');
+  clearTimeout(flashMidi._t);
+  flashMidi._t = setTimeout(() => el.classList.remove('flash'), 180);
+}
+
+// ── PDF Folder ────────────────────────────────────────────────────────────
+$('btn-folder').addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) {
+    toast('File System Access API not supported. Use Chrome 96+ on Android.');
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'read' });
+    dirHandle = handle;
+    await scanFolder(handle);
+    updateStartButton();
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Error opening folder: ' + e.message);
+  }
+});
+
+function parseFileNumber(name) {
+  // Match leading digits; the rest is ignored for matching purposes
+  const m = name.match(/^(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return isNaN(n) ? null : n;
+}
+
+async function scanFolder(handle) {
+  pdfMap.clear();
+  for (const url of urlCache.values()) URL.revokeObjectURL(url);
+  urlCache.clear();
+
+  let count = 0;
+  for await (const [name, fh] of handle.entries()) {
+    if (fh.kind !== 'file') continue;
+    if (!name.toLowerCase().endsWith('.pdf')) continue;
+    const num = parseFileNumber(name);
+    if (num !== null) { pdfMap.set(num, fh); count++; }
+  }
+
+  $('folder-dot').className = 'dot ' + (count > 0 ? 'dot-ok' : 'dot-warn');
+  $('folder-status').textContent = handle.name;
+  $('pdf-count').textContent = count > 0
+    ? `${count} PDF file${count > 1 ? 's' : ''} indexed`
+    : 'No numbered PDF files found in this folder';
+}
+
+// ── Song display ──────────────────────────────────────────────────────────
+async function showSong(number) {
+  // Switch to viewer if not already there
+  if (!$('viewer-screen').classList.contains('active')) showScreen('viewer');
+
+  $('v-num').textContent      = number;
+  $('no-pdf-num').textContent = number;
+  $('waiting-msg').style.display = 'none';
+
+  const handle = pdfMap.get(number);
+  if (!handle) {
+    $('pdf-embed').style.display = 'none';
+    $('no-pdf').style.display    = 'flex';
+    $('v-name').textContent      = 'No PDF found';
+    $('no-pdf-hint').textContent = `No file starting with "${number}" in selected folder`;
+    return;
+  }
+
+  try {
+    let url = urlCache.get(number);
+    if (!url) {
+      const file = await handle.getFile();
+      url = URL.createObjectURL(file);
+      urlCache.set(number, url);
+    }
+
+    $('no-pdf').style.display        = 'none';
+    $('pdf-embed').style.display     = 'block';
+    $('pdf-embed').src               = url + '#toolbar=0&view=FitH';
+
+    // Derive display name: strip leading number + delimiter
+    const rawName = (await handle.getFile()).name;
+    const displayName = rawName
+      .replace(/^\d+\s*[-_.\s]+\s*/, '')
+      .replace(/\.pdf$/i, '');
+    $('v-name').textContent = displayName || rawName;
+
+  } catch (e) {
+    toast('Error loading PDF: ' + e.message);
+  }
+}
+
+// ── Screen switching ──────────────────────────────────────────────────────
+function showScreen(name) {
+  $('setup-screen').classList.toggle('active',  name === 'setup');
+  $('viewer-screen').classList.toggle('active', name === 'viewer');
+}
+
+$('btn-start').addEventListener('click',    () => showScreen('viewer'));
+$('btn-settings').addEventListener('click', () => showScreen('setup'));
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+populateConfigUI();
+initMidi();
+
+// ── Service Worker (offline support) ─────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
