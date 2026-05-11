@@ -593,6 +593,30 @@ async function showSong(number) {
 $('btn-prev').addEventListener('click', () => renderPage(_currentPage - 1));
 $('btn-next').addEventListener('click', () => renderPage(_currentPage + 1));
 
+// ── Wake Lock (keep screen on while listening) ────────────────────────────
+let _wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    _wakeLock = await navigator.wakeLock.request('screen');
+    // Re-acquire after the page becomes visible again (e.g. tab switch)
+    _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+  } catch (e) { /* silently ignore – not critical */ }
+}
+
+function releaseWakeLock() {
+  if (_wakeLock) { _wakeLock.release().catch(() => {}); _wakeLock = null; }
+}
+
+// Re-acquire if the page regains visibility while in viewer mode
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' &&
+      $('viewer-screen').classList.contains('active')) {
+    acquireWakeLock();
+  }
+});
+
 // ── Screen switching ──────────────────────────────────────────────────────
 function showScreen(name) {
   $('setup-screen').classList.toggle('active',  name === 'setup');
@@ -601,6 +625,7 @@ function showScreen(name) {
 
 $('btn-start').addEventListener('click', () => {
   showScreen('viewer');
+  acquireWakeLock();
   // Request fullscreen on the initial tap (requires user gesture)
   const el = document.documentElement;
   if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
@@ -608,6 +633,7 @@ $('btn-start').addEventListener('click', () => {
 });
 
 $('btn-settings').addEventListener('click', () => {
+  releaseWakeLock();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   showScreen('setup');
 });
