@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <title>BandMaster Listener</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -90,6 +91,18 @@
     .waiting .wlabel { font-size: 1rem; }
     .waiting .wpulse { font-size: 3rem; animation: pulse 2s ease-in-out infinite; }
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+    /* ── PDF canvas viewer ───────────────────────────────────────────── */
+    #pdf-pages { flex: 1; overflow-y: auto; overflow-x: hidden; background: #111;
+                 display: flex; flex-direction: column; align-items: center; gap: 4px;
+                 padding: 4px 0; }
+    #pdf-pages canvas { width: 100%; height: auto; display: block; }
+
+    /* ── Viewer bar extras ───────────────────────────────────────────── */
+    .btn-icon { background: transparent; border: 1px solid #333; color: var(--muted);
+                padding: 5px 9px; border-radius: 6px; font-size: 1rem; cursor: pointer;
+                flex-shrink: 0; line-height: 1; }
+    .btn-icon:active { opacity: 0.6; }
 
     /* ── Toast ──────────────────────────────────────────────────────── */
     #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
@@ -198,11 +211,12 @@
     <span class="v-num"  id="v-num">—</span>
     <span class="v-name" id="v-name">Waiting for MIDI…</span>
     <div class="midi-dot" id="midi-flash"></div>
+    <button class="btn-icon" id="btn-fullscreen" title="Fullscreen">⛶</button>
     <button class="btn btn-secondary" id="btn-settings"
             style="padding:6px 11px;font-size:0.82rem;flex-shrink:0">⚙ Settings</button>
   </div>
   <div class="pdf-wrap">
-    <embed id="pdf-embed" type="application/pdf" style="display:none">
+    <div id="pdf-pages"></div>
     <div class="no-pdf" id="no-pdf" style="display:none">
       <div class="big" id="no-pdf-num">—</div>
       <div>No PDF found for this song</div>
@@ -219,6 +233,12 @@
 
 <script>
 'use strict';
+
+// ── PDF.js setup ─────────────────────────────────────────────────────────
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -259,7 +279,6 @@ let midiAccess    = null;
 let selectedInput = null;
 let dirHandle     = null;
 const pdfMap      = new Map();   // number (int) → FileSystemFileHandle
-const urlCache    = new Map();   // number → blob URL
 
 // ── Populate config UI ────────────────────────────────────────────────────
 function populateConfigUI() {
@@ -457,8 +476,6 @@ function parseFileNumber(name) {
 
 async function scanFolder(handle) {
   pdfMap.clear();
-  for (const url of urlCache.values()) URL.revokeObjectURL(url);
-  urlCache.clear();
 
   let count = 0;
   for await (const [name, fh] of handle.entries()) {
@@ -476,9 +493,10 @@ async function scanFolder(handle) {
 }
 
 // ── Song display ──────────────────────────────────────────────────────────
+let _currentRender = 0;   // increment to cancel stale renders
+
 async function showSong(number) {
-  // Switch to viewer if not already there
-  if (!$('viewer-screen').classList.contains('active')) showScreen('viewer');
+  showScreen('viewer');
 
   $('v-num').textContent      = number;
   $('no-pdf-num').textContent = number;
@@ -486,34 +504,52 @@ async function showSong(number) {
 
   const handle = pdfMap.get(number);
   if (!handle) {
-    $('pdf-embed').style.display = 'none';
+    $('pdf-pages').innerHTML     = '';
     $('no-pdf').style.display    = 'flex';
     $('v-name').textContent      = 'No PDF found';
     $('no-pdf-hint').textContent = `Expected: ${String(number).padStart(3,'0')} - Bxxx - aOb - Artist - Title.pdf`;
     return;
   }
 
+  $('no-pdf').style.display = 'none';
+
   try {
-    let url = urlCache.get(number);
-    if (!url) {
-      const file = await handle.getFile();
-      url = URL.createObjectURL(file);
-      urlCache.set(number, url);
-    }
-
-    $('no-pdf').style.display        = 'none';
-    $('pdf-embed').style.display     = 'block';
-    $('pdf-embed').src               = url + '#toolbar=0&view=FitH';
-
-    // Derive display name from format: xxx - Byyy - aOb - INTERPRET_NAME - SONG_NAME
-    // Display: INTERPRET_NAME - SONG_NAME  (skip first 3 segments)
+    // Derive display name: skip first 3 segments (number, BPM, time sig)
     const rawName = (await handle.getFile()).name;
     const parts = rawName.replace(/\.pdf$/i, '').split(' - ');
-    const displayName = parts.length >= 5
-      ? parts.slice(3).join(' - ')
-      : rawName.replace(/\.pdf$/i, '');
-    $('v-name').textContent = displayName;
+    $('v-name').textContent = parts.length >= 5 ? parts.slice(3).join(' - ') : rawName.replace(/\.pdf$/i, '');
 
+    // Load PDF bytes
+    const file = await handle.getFile();
+    const arrayBuffer = await file.arrayBuffer();
+
+    const renderId = ++_currentRender;
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+    const container = $('pdf-pages');
+    container.innerHTML = '';       // clear previous pages
+    container.scrollTop = 0;
+
+    const containerWidth = container.clientWidth || window.innerWidth;
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      if (renderId !== _currentRender) return;  // new song arrived, abort
+
+      const page     = await pdf.getPage(pageNum);
+      const baseVP   = page.getViewport({ scale: 1 });
+      const dpr      = window.devicePixelRatio || 1;
+      const scale    = (containerWidth / baseVP.width) * dpr;
+      const viewport = page.getViewport({ scale });
+
+      const canvas    = document.createElement('canvas');
+      canvas.width    = viewport.width;
+      canvas.height   = viewport.height;
+      canvas.style.width  = containerWidth + 'px';
+      canvas.style.height = (viewport.height / dpr) + 'px';
+      container.appendChild(canvas);
+
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    }
   } catch (e) {
     toast('Error loading PDF: ' + e.message);
   }
@@ -525,8 +561,29 @@ function showScreen(name) {
   $('viewer-screen').classList.toggle('active', name === 'viewer');
 }
 
-$('btn-start').addEventListener('click',    () => showScreen('viewer'));
-$('btn-settings').addEventListener('click', () => showScreen('setup'));
+$('btn-start').addEventListener('click', () => {
+  showScreen('viewer');
+  // Request fullscreen on the initial tap (requires user gesture)
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+});
+
+$('btn-settings').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  showScreen('setup');
+});
+
+$('btn-fullscreen').addEventListener('click', () => {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 populateConfigUI();
