@@ -93,10 +93,25 @@
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
 
     /* ── PDF canvas viewer ───────────────────────────────────────────── */
-    #pdf-pages { flex: 1; overflow-y: auto; overflow-x: hidden; background: #111;
-                 display: flex; flex-direction: column; align-items: center; gap: 4px;
-                 padding: 4px 0; }
-    #pdf-pages canvas { width: 100%; height: auto; display: block; }
+    #pdf-wrap-inner { flex: 1; position: relative; display: flex;
+                      align-items: center; justify-content: center;
+                      background: #111; overflow: hidden; }
+    #pdf-canvas { display: block; max-width: 100%; max-height: 100%;
+                  object-fit: contain; }
+    /* page nav arrows */
+    .pg-btn { position: absolute; top: 50%; transform: translateY(-50%);
+              background: rgba(0,0,0,0.45); border: none; color: #fff;
+              font-size: 2rem; line-height: 1; padding: 14px 10px;
+              cursor: pointer; z-index: 10; border-radius: 6px;
+              touch-action: manipulation; user-select: none; }
+    .pg-btn:active { background: rgba(0,0,0,0.75); }
+    #btn-prev { left: 0; border-radius: 0 6px 6px 0; }
+    #btn-next { right: 0; border-radius: 6px 0 0 6px; }
+    #page-indicator { position: absolute; bottom: 8px; left: 50%;
+                      transform: translateX(-50%);
+                      background: rgba(0,0,0,0.55); color: #ccc;
+                      font-size: 0.75rem; padding: 3px 10px; border-radius: 10px;
+                      pointer-events: none; }
 
     /* ── Viewer bar extras ───────────────────────────────────────────── */
     .btn-icon { background: transparent; border: 1px solid #333; color: var(--muted);
@@ -215,8 +230,11 @@
     <button class="btn btn-secondary" id="btn-settings"
             style="padding:6px 11px;font-size:0.82rem;flex-shrink:0">⚙ Settings</button>
   </div>
-  <div class="pdf-wrap">
-    <div id="pdf-pages"></div>
+  <div id="pdf-wrap-inner">
+    <canvas id="pdf-canvas" style="display:none"></canvas>
+    <button class="pg-btn" id="btn-prev" style="display:none">&#8249;</button>
+    <button class="pg-btn" id="btn-next" style="display:none">&#8250;</button>
+    <span id="page-indicator" style="display:none"></span>
     <div class="no-pdf" id="no-pdf" style="display:none">
       <div class="big" id="no-pdf-num">—</div>
       <div>No PDF found for this song</div>
@@ -494,6 +512,45 @@ async function scanFolder(handle) {
 
 // ── Song display ──────────────────────────────────────────────────────────
 let _currentRender = 0;   // increment to cancel stale renders
+let _pdfDoc        = null;
+let _currentPage   = 1;
+
+async function renderPage(pageNum) {
+  if (!_pdfDoc) return;
+  pageNum = Math.max(1, Math.min(pageNum, _pdfDoc.numPages));
+  _currentPage = pageNum;
+
+  const page   = await _pdfDoc.getPage(pageNum);
+  const wrap   = $('pdf-wrap-inner');
+  const canvas = $('pdf-canvas');
+  const dpr    = window.devicePixelRatio || 1;
+
+  // Scale to fit the available area (letterbox/contain)
+  const availW = wrap.clientWidth  || window.innerWidth;
+  const availH = wrap.clientHeight || (window.innerHeight - 46);
+  const baseVP = page.getViewport({ scale: 1 });
+  const scale  = Math.min(availW / baseVP.width, availH / baseVP.height) * dpr;
+  const vp     = page.getViewport({ scale });
+
+  canvas.width  = vp.width;
+  canvas.height = vp.height;
+  canvas.style.width  = (vp.width  / dpr) + 'px';
+  canvas.style.height = (vp.height / dpr) + 'px';
+  canvas.style.display = 'block';
+
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+
+  // Page navigation controls
+  const multi = _pdfDoc.numPages > 1;
+  $('btn-prev').style.display      = multi ? '' : 'none';
+  $('btn-next').style.display      = multi ? '' : 'none';
+  $('page-indicator').style.display = multi ? '' : 'none';
+  if (multi) {
+    $('page-indicator').textContent = `${pageNum} / ${_pdfDoc.numPages}`;
+    $('btn-prev').disabled = pageNum <= 1;
+    $('btn-next').disabled = pageNum >= _pdfDoc.numPages;
+  }
+}
 
 async function showSong(number) {
   showScreen('viewer');
@@ -504,7 +561,8 @@ async function showSong(number) {
 
   const handle = pdfMap.get(number);
   if (!handle) {
-    $('pdf-pages').innerHTML     = '';
+    $('pdf-canvas').style.display = 'none';
+    $('btn-prev').style.display = $('btn-next').style.display = $('page-indicator').style.display = 'none';
     $('no-pdf').style.display    = 'flex';
     $('v-name').textContent      = 'No PDF found';
     $('no-pdf-hint').textContent = `Expected: ${String(number).padStart(3,'0')} - Bxxx - aOb - Artist - Title.pdf`;
@@ -514,46 +572,26 @@ async function showSong(number) {
   $('no-pdf').style.display = 'none';
 
   try {
-    // Derive display name: skip first 3 segments (number, BPM, time sig)
+    // Display name
     const rawName = (await handle.getFile()).name;
     const parts = rawName.replace(/\.pdf$/i, '').split(' - ');
     $('v-name').textContent = parts.length >= 5 ? parts.slice(3).join(' - ') : rawName.replace(/\.pdf$/i, '');
 
-    // Load PDF bytes
-    const file = await handle.getFile();
-    const arrayBuffer = await file.arrayBuffer();
-
+    // Load PDF
+    const ab      = await (await handle.getFile()).arrayBuffer();
     const renderId = ++_currentRender;
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pdf     = await pdfjsLib.getDocument({ data: ab }).promise;
+    if (renderId !== _currentRender) return;  // superseded by newer MIDI signal
 
-    const container = $('pdf-pages');
-    container.innerHTML = '';       // clear previous pages
-    container.scrollTop = 0;
-
-    const containerWidth = container.clientWidth || window.innerWidth;
-
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-      if (renderId !== _currentRender) return;  // new song arrived, abort
-
-      const page     = await pdf.getPage(pageNum);
-      const baseVP   = page.getViewport({ scale: 1 });
-      const dpr      = window.devicePixelRatio || 1;
-      const scale    = (containerWidth / baseVP.width) * dpr;
-      const viewport = page.getViewport({ scale });
-
-      const canvas    = document.createElement('canvas');
-      canvas.width    = viewport.width;
-      canvas.height   = viewport.height;
-      canvas.style.width  = containerWidth + 'px';
-      canvas.style.height = (viewport.height / dpr) + 'px';
-      container.appendChild(canvas);
-
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    }
+    _pdfDoc = pdf;
+    await renderPage(1);  // always start at page 1
   } catch (e) {
     toast('Error loading PDF: ' + e.message);
   }
 }
+
+$('btn-prev').addEventListener('click', () => renderPage(_currentPage - 1));
+$('btn-next').addEventListener('click', () => renderPage(_currentPage + 1));
 
 // ── Screen switching ──────────────────────────────────────────────────────
 function showScreen(name) {
