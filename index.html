@@ -374,7 +374,13 @@ async function initMidi() {
   }
   try {
     midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-    midiAccess.onstatechange = () => refreshMidiList();
+    // Debounce state-change so rapid connect/disconnect bursts don't
+    // queue up multiple simultaneous reconnect attempts.
+    let _scTimer = null;
+    midiAccess.onstatechange = () => {
+      clearTimeout(_scTimer);
+      _scTimer = setTimeout(() => refreshMidiList(), 300);
+    };
     refreshMidiList();
   } catch (e) {
     setMidiStatus('err', 'MIDI access denied: ' + (e.message || e));
@@ -411,17 +417,35 @@ function refreshMidiList() {
 }
 
 function connectMidi(portId) {
-  if (selectedInput) selectedInput.onmidimessage = null;
-  const port = midiAccess && midiAccess.inputs.get(portId);
-  if (!port) { setMidiStatus('err', 'Device not found'); return; }
+  const prev = selectedInput;
+  selectedInput = null;   // clear immediately so stale messages are dropped
 
-  selectedInput = port;
-  cfg.midiPortId = portId;
-  saveConfig();
+  const doOpen = () => {
+    const port = midiAccess && midiAccess.inputs.get(portId);
+    if (!port) { setMidiStatus('err', 'Device not found'); updateStartButton(); return; }
 
-  port.onmidimessage = handleMidi;
-  setMidiStatus('ok', 'Connected: ' + port.name);
-  updateStartButton();
+    port.open().then(() => {
+      selectedInput = port;
+      cfg.midiPortId = portId;
+      saveConfig();
+      port.onmidimessage = handleMidi;
+      setMidiStatus('ok', 'Connected: ' + port.name);
+      updateStartButton();
+    }).catch(e => {
+      setMidiStatus('err', 'Could not open port: ' + (e.message || e));
+      updateStartButton();
+    });
+  };
+
+  if (prev) {
+    // Fully close the previous port before opening the new one.
+    // Chrome can crash if the same physical port is claimed by two
+    // page instances simultaneously (rapid refresh scenario).
+    prev.onmidimessage = null;
+    prev.close().then(doOpen).catch(doOpen);
+  } else {
+    doOpen();
+  }
 }
 
 $('sel-midi').addEventListener('change', () => {
@@ -720,7 +744,20 @@ $('btn-fullscreen').addEventListener('click', () => {
 // ── Boot ──────────────────────────────────────────────────────────────────
 populateConfigUI();
 initMidi();
-
+// Release MIDI resources before the page unloads (refresh / navigate away).
+// Without this, Chrome can hold the port open across loads, causing the
+// browser to crash or freeze when the new page also tries to claim it.
+window.addEventListener('beforeunload', () => {
+  if (selectedInput) {
+    try { selectedInput.onmidimessage = null; } catch {}
+    try { selectedInput.close(); } catch {}
+    selectedInput = null;
+  }
+  if (midiAccess) {
+    try { midiAccess.onstatechange = null; } catch {}
+    midiAccess = null;
+  }
+});
 // ── Service Worker (offline support) ─────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
