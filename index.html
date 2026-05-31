@@ -311,6 +311,7 @@ const cfg = loadConfig();
 let midiAccess    = null;
 let selectedInput = null;
 let dirHandle     = null;
+let _listening    = false;       // true only while on the viewer / actively listening
 let _currentSong  = null;        // last displayed song number (MIDI or manual)
 const pdfMap      = new Map();   // number (int) → FileSystemFileHandle
 
@@ -335,7 +336,11 @@ function updateCcRowVisibility() {
 }
 
 function updateStartButton() {
-  $('btn-start').disabled = !(selectedInput && dirHandle);
+  // Port is not open on the setup screen, so check midiAccess.inputs instead
+  const portId   = $('sel-midi').value || cfg.midiPortId;
+  const hasDevice = selectedInput ||
+                    (midiAccess && portId && midiAccess.inputs.has(portId));
+  $('btn-start').disabled = !(hasDevice && dirHandle);
 }
 
 // ── Config event listeners ────────────────────────────────────────────────
@@ -404,7 +409,15 @@ function refreshMidiList() {
   if (midiAccess.inputs.size === 1 && !sel.value) sel.selectedIndex = 1;
 
   if (sel.value) {
-    connectMidi(sel.value);
+    if (_listening) {
+      connectMidi(sel.value);   // (re)connect when port comes back while listening
+    } else {
+      const port = midiAccess.inputs.get(sel.value);
+      cfg.midiPortId = sel.value;
+      saveConfig();
+      setMidiStatus('ok', 'Ready: ' + port.name);
+      updateStartButton();
+    }
   } else if (midiAccess.inputs.size === 0) {
     setMidiStatus('err', 'No MIDI input devices found');
     selectedInput = null;
@@ -448,8 +461,26 @@ function connectMidi(portId) {
   }
 }
 
+function disconnectMidi() {
+  if (selectedInput) {
+    selectedInput.onmidimessage = null;
+    selectedInput.close().catch(() => {});
+    selectedInput = null;
+  }
+}
+
 $('sel-midi').addEventListener('change', () => {
-  if ($('sel-midi').value) connectMidi($('sel-midi').value);
+  const portId = $('sel-midi').value;
+  if (!portId) return;
+  if (_listening) {
+    connectMidi(portId);
+  } else {
+    const port = midiAccess && midiAccess.inputs.get(portId);
+    cfg.midiPortId = portId;
+    saveConfig();
+    setMidiStatus(port ? 'ok' : 'err', port ? 'Ready: ' + port.name : 'Device not found');
+    updateStartButton();
+  }
 });
 $('btn-refresh').addEventListener('click', refreshMidiList);
 
@@ -716,6 +747,8 @@ function showScreen(name) {
 }
 
 $('btn-start').addEventListener('click', () => {
+  _listening = true;
+  connectMidi($('sel-midi').value || cfg.midiPortId);
   showScreen('viewer');
   acquireWakeLock();
   // Request fullscreen on the initial tap (requires user gesture)
@@ -725,9 +758,12 @@ $('btn-start').addEventListener('click', () => {
 });
 
 $('btn-settings').addEventListener('click', () => {
+  _listening = false;
+  disconnectMidi();
   releaseWakeLock();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   showScreen('setup');
+  refreshMidiList();   // re-populate dropdown and show “Ready” status
 });
 
 $('btn-fullscreen').addEventListener('click', () => {
