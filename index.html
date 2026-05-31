@@ -240,7 +240,6 @@
     <button class="btn-icon" id="btn-song-prev" title="Previous song">◀</button>
     <button class="btn-icon" id="btn-song-next" title="Next song">▶</button>
     <input type="number" id="manual-song-num" placeholder="###" min="0" max="999">
-    <button class="btn-icon" id="btn-manual-open" title="Open song number">Open</button>
     <span id="v-clock"></span>
     <button class="btn-icon" id="btn-fullscreen" title="Fullscreen">⛶</button>
     <button class="btn btn-secondary" id="btn-settings"
@@ -637,15 +636,12 @@ $('btn-song-next').addEventListener('click', () => {
 });
 
 // ── Manual song open ──────────────────────────────────────────────────────
-$('btn-manual-open').addEventListener('click', () => {
+$('manual-song-num').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
   const val = parseInt($('manual-song-num').value, 10);
   if (isNaN(val)) { toast('Enter a song number first'); return; }
   $('manual-song-num').value = '';
   showSong(val);
-});
-
-$('manual-song-num').addEventListener('keydown', e => {
-  if (e.key === 'Enter') $('btn-manual-open').click();
 });
 
 // ── Clock ─────────────────────────────────────────────────────────────────
