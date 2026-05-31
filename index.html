@@ -415,50 +415,64 @@ $('btn-refresh').addEventListener('click', refreshMidiList);
 
 // ── MIDI message handling ─────────────────────────────────────────────────
 function handleMidi(ev) {
-  const data   = ev.data;
-  const status = data[0];
-  const d1     = data[1] ?? 0;
-  const d2     = data[2] ?? 0;
+  try {
+    const data = ev.data;
+    if (!data || data.length === 0) return;
 
-  const ch   = (status & 0x0F) + 1;   // 1-based
-  const type = (status & 0xF0);
+    const status = data[0];
 
-  if (ch !== cfg.channel) return;
+    // Ignore ALL System messages (0xF0–0xFF):
+    // SysEx (0xF0), MTC (0xF1), Song Position (0xF2), Song Select (0xF3),
+    // Tune Request (0xF6), SysEx End (0xF7), MIDI Clock (0xF8),
+    // Start (0xFA), Continue (0xFB), Stop (0xFC),
+    // Active Sensing (0xFE), System Reset (0xFF).
+    // These are not channel messages and must never reach the song logic.
+    if (status >= 0xF0) return;
 
-  let rawValue = null;
+    const d1   = data[1] ?? 0;
+    const d2   = data[2] ?? 0;
+    const ch   = (status & 0x0F) + 1;   // 1-based
+    const type = (status & 0xF0);
 
-  switch (cfg.signalType) {
-    case 'cc':
-      if (type !== 0xB0) return;
-      if (d1 !== cfg.ccFilter) return;
-      if (d2 === 0) return;  // ignore 0-velocity (release)
-      rawValue = d2;
-      break;
-    case 'pc':
-      if (type !== 0xC0) return;
-      rawValue = d1;
-      break;
-    case 'note_on':
-      if (type !== 0x90) return;
-      if (d2 === 0) return;  // velocity=0 is Note Off on many devices
-      rawValue = d1;
-      break;
-    case 'note_off':
-      if (type !== 0x80) return;
-      rawValue = d1;
-      break;
-    case 'note_on_off':
-      if (type !== 0x90) return;
-      if (d2 === 0) return;
-      rawValue = d1;
-      break;
-    default: return;
+    if (ch !== cfg.channel) return;
+
+    let rawValue = null;
+
+    switch (cfg.signalType) {
+      case 'cc':
+        if (type !== 0xB0) return;
+        if (d1 !== cfg.ccFilter) return;
+        if (d2 === 0) return;  // ignore 0-velocity (release)
+        rawValue = d2;
+        break;
+      case 'pc':
+        if (type !== 0xC0) return;
+        rawValue = d1;
+        break;
+      case 'note_on':
+        if (type !== 0x90) return;
+        if (d2 === 0) return;  // velocity=0 is Note Off on many devices
+        rawValue = d1;
+        break;
+      case 'note_off':
+        if (type !== 0x80) return;
+        rawValue = d1;
+        break;
+      case 'note_on_off':
+        if (type !== 0x90) return;
+        if (d2 === 0) return;
+        rawValue = d1;
+        break;
+      default: return;
+    }
+
+    if (rawValue === null) return;
+    const songNumber = rawValue + cfg.offset;
+    flashMidi();
+    showSong(songNumber);
+  } catch (e) {
+    // Swallow unexpected MIDI data formats so the handler is never broken
   }
-
-  if (rawValue === null) return;
-  const songNumber = rawValue + cfg.offset;
-  flashMidi();
-  showSong(songNumber);
 }
 
 function flashMidi() {
@@ -600,8 +614,14 @@ async function acquireWakeLock() {
   if (!('wakeLock' in navigator)) return;
   try {
     _wakeLock = await navigator.wakeLock.request('screen');
-    // Re-acquire after the page becomes visible again (e.g. tab switch)
-    _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+    // Re-acquire if the browser drops the lock (power-save, low battery, etc.)
+    _wakeLock.addEventListener('release', () => {
+      _wakeLock = null;
+      if (document.visibilityState === 'visible' &&
+          $('viewer-screen').classList.contains('active')) {
+        acquireWakeLock();
+      }
+    });
   } catch (e) { /* silently ignore – not critical */ }
 }
 
