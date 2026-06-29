@@ -130,6 +130,27 @@
     #manual-song-num::-webkit-inner-spin-button,
     #manual-song-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
+    /* ── Manual Mode search bar ─────────────────────────────────────── */
+    .btn-manual { background: #1565c0; color: white; }
+    #manual-search-bar { flex-shrink: 0; background: rgba(10,10,30,0.88);
+                         padding: 6px 12px; border-bottom: 1px solid #222;
+                         position: relative; }
+    #manual-filter { width: 100%; background: var(--accent); color: var(--text);
+                     border: 1px solid #3a4a6a; border-radius: 8px;
+                     padding: 9px 12px; font-size: 0.9rem; outline: none; }
+    #manual-filter::placeholder { color: var(--muted); }
+    #filter-dropdown { position: absolute; left: 12px; right: 12px; top: 100%;
+                       background: var(--surface); border: 1px solid #3a4a6a;
+                       border-top: none; border-radius: 0 0 8px 8px;
+                       max-height: 260px; overflow-y: auto; z-index: 100; }
+    .filter-item { padding: 9px 12px; font-size: 0.85rem; cursor: pointer;
+                   border-bottom: 1px solid rgba(255,255,255,0.05); white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+    .filter-item:last-child { border-bottom: none; }
+    .filter-item:hover, .filter-item.focused { background: var(--accent); }
+    .filter-item .fi-num { color: var(--highlight); font-weight: 700;
+                           margin-right: 8px; font-size: 0.8rem; }
+
     /* ── Toast ──────────────────────────────────────────────────────── */
     #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
              background: #2a2a2a; color: #eee; padding: 9px 18px; border-radius: 18px;
@@ -222,6 +243,11 @@
       ▶  Start Listening
     </button>
 
+    <button class="btn btn-manual btn-full" id="btn-manual" disabled
+            style="font-size:1.05rem;padding:13px">
+      ✋  Manual Mode
+    </button>
+
     <div class="info-box">
       Filename format: <code>042 - B120 - 4O4 - The Beatles - Let It Be.pdf</code><br>
       Song number (leading digits) · BPM (Bxxx) · Time sig (aOb) · Artist · Title<br>
@@ -245,6 +271,11 @@
     <button class="btn btn-secondary" id="btn-settings"
             style="padding:12px 14px;font-size:0.88rem;flex-shrink:0;touch-action:manipulation">⚙ Settings</button>
   </div>
+  <div id="manual-search-bar" style="display:none">
+    <input type="text" id="manual-filter" placeholder="🔍 Search by filename…" autocomplete="off" spellcheck="false">
+    <div id="filter-dropdown" style="display:none"></div>
+  </div>
+
   <div id="pdf-wrap-inner">
     <canvas id="pdf-canvas" style="display:none"></canvas>
     <button class="pg-btn" id="btn-prev" style="display:none">&#8249;</button>
@@ -257,7 +288,7 @@
     </div>
     <div class="waiting" id="waiting-msg">
       <div class="wpulse">🎵</div>
-      <div class="wlabel">Listening for MIDI…</div>
+      <div class="wlabel" id="waiting-label">Listening for MIDI…</div>
     </div>
   </div>
 </div>
@@ -312,8 +343,10 @@ let midiAccess    = null;
 let selectedInput = null;
 let dirHandle     = null;
 let _listening    = false;       // true only while on the viewer / actively listening
+let _manualMode   = false;       // true when viewer is open without MIDI
 let _currentSong  = null;        // last displayed song number (MIDI or manual)
 const pdfMap      = new Map();   // number (int) → FileSystemFileHandle
+const fileList    = [];          // { num, name } — sorted list for filename filter
 
 // ── Populate config UI ────────────────────────────────────────────────────
 function populateConfigUI() {
@@ -340,7 +373,8 @@ function updateStartButton() {
   const portId   = $('sel-midi').value || cfg.midiPortId;
   const hasDevice = selectedInput ||
                     (midiAccess && portId && midiAccess.inputs.has(portId));
-  $('btn-start').disabled = !(hasDevice && dirHandle);
+  $('btn-start').disabled  = !(hasDevice && dirHandle);
+  $('btn-manual').disabled = !dirHandle;
 }
 
 // ── Config event listeners ────────────────────────────────────────────────
@@ -579,14 +613,20 @@ function parseFileNumber(name) {
 
 async function scanFolder(handle) {
   pdfMap.clear();
+  fileList.length = 0;
 
   let count = 0;
   for await (const [name, fh] of handle.entries()) {
     if (fh.kind !== 'file') continue;
     if (!name.toLowerCase().endsWith('.pdf')) continue;
     const num = parseFileNumber(name);
-    if (num !== null) { pdfMap.set(num, fh); count++; }
+    if (num !== null) {
+      pdfMap.set(num, fh);
+      fileList.push({ num, name });
+      count++;
+    }
   }
+  fileList.sort((a, b) => a.num - b.num);
 
   $('folder-dot').className = 'dot ' + (count > 0 ? 'dot-ok' : 'dot-warn');
   $('folder-status').textContent = handle.name;
@@ -699,6 +739,58 @@ $('manual-song-num').addEventListener('keydown', e => {
   showSong(val);
 });
 
+// ── Manual file filter (Manual Mode) ─────────────────────────────────────
+$('manual-filter').addEventListener('input', () => {
+  const q  = $('manual-filter').value.trim().toLowerCase();
+  const dd = $('filter-dropdown');
+  if (!q) { dd.style.display = 'none'; dd.innerHTML = ''; return; }
+
+  const matches = fileList.filter(f => f.name.toLowerCase().includes(q)).slice(0, 60);
+  if (matches.length === 0) { dd.style.display = 'none'; dd.innerHTML = ''; return; }
+
+  dd.innerHTML = matches.map(f =>
+    `<div class="filter-item" data-num="${f.num}">` +
+    `<span class="fi-num">${String(f.num).padStart(3, '0')}</span>` +
+    `${f.name.replace(/\.pdf$/i, '')}` +
+    `</div>`
+  ).join('');
+  dd.style.display = '';
+
+  dd.querySelectorAll('.filter-item').forEach(item => {
+    item.addEventListener('mousedown', e => {
+      // Use mousedown so it fires before the input loses focus
+      e.preventDefault();
+      const num = parseInt(item.dataset.num, 10);
+      $('manual-filter').value = '';
+      dd.style.display = 'none';
+      dd.innerHTML = '';
+      showSong(num);
+    });
+  });
+});
+
+$('manual-filter').addEventListener('keydown', e => {
+  const dd = $('filter-dropdown');
+  if (e.key === 'Escape') {
+    dd.style.display = 'none';
+    dd.innerHTML = '';
+    $('manual-filter').value = '';
+    return;
+  }
+  if (e.key === 'Enter') {
+    const first = dd.querySelector('.filter-item');
+    if (first) { first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }
+    return;
+  }
+});
+
+// Close dropdown when clicking outside the search bar
+document.addEventListener('click', e => {
+  if ($('manual-search-bar') && !$('manual-search-bar').contains(e.target)) {
+    $('filter-dropdown').style.display = 'none';
+  }
+});
+
 // ── Clock ─────────────────────────────────────────────────────────────────
 function updateClock() {
   const now = new Date();
@@ -757,10 +849,31 @@ $('btn-start').addEventListener('click', () => {
   else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
 });
 
+$('btn-manual').addEventListener('click', () => {
+  _manualMode = true;
+  _listening  = false;
+  $('waiting-label').textContent = 'Search for a song above or enter a number';
+  $('manual-search-bar').style.display = '';
+  $('midi-flash').style.display = 'none';
+  showScreen('viewer');
+  acquireWakeLock();
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  setTimeout(() => $('manual-filter').focus(), 100);
+});
+
 $('btn-settings').addEventListener('click', () => {
-  _listening = false;
+  _listening  = false;
+  _manualMode = false;
   disconnectMidi();
   releaseWakeLock();
+  $('manual-search-bar').style.display = 'none';
+  $('filter-dropdown').style.display = 'none';
+  $('filter-dropdown').innerHTML = '';
+  $('manual-filter').value = '';
+  $('midi-flash').style.display = '';
+  $('waiting-label').textContent = 'Listening for MIDI…';
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   showScreen('setup');
   refreshMidiList();   // re-populate dropdown and show “Ready” status
