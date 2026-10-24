@@ -4,7 +4,7 @@ This project uses **spec-driven development**: every feature is specified, desig
 planned in writing before it is implemented. Each feature lives in its own folder
 `specs/NNN-short-name/` with `spec.md`, optional `ui.md`, `design.md`, `tasks.md` and `review.md`.
 
-Workflow: Spec → (UI design) → Plan → Implement (phase by phase) → Review.
+Workflow: (Challenge) → Spec → (UI design) → Plan → Implement (phase by phase) → Review.
 Every step ends with a review by you; an artifact is approved when its frontmatter says
 `status: approved`.
 
