@@ -14,9 +14,17 @@ merge locally, or leave as is.
 
 Start a new feature in Copilot Chat by selecting the **sdd-orchestrator** agent (full
 workflow with pauses) or **sdd-spec-writer** (only the first step).
+Work out an idea first with **sdd-request-writer**: it fills in the feature request with you
+and parks it in `specs/backlog/` until you start it.
 
 ## Features
 
 | # | Feature | Current step | Folder |
 |---|---------|--------------|--------|
 | – | – | – | – |
+
+## Backlog
+
+| Request | Status | File |
+|---------|--------|------|
+| – | – | – |
